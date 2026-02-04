@@ -64,7 +64,7 @@ class NetBoxExporter:
         ("virtualization", "cluster-groups"),
         ("virtualization", "clusters"),
         ("virtualization", "virtual-machines"),
-        ("virtualization", "vm-interfaces"),
+        ("virtualization", "interfaces"),
         # Wireless
         ("wireless", "wireless-lan-groups"),
         ("wireless", "wireless-lans"),
@@ -375,7 +375,7 @@ class NetBoxExporter:
                         row[k] = str(v)
                 writer.writerow(row)
 
-        print(f"  ✓ Saved {result['count']} records to {app}/{filename}")
+        print(f"  ✓ Saved {result['count']} records to {app_name}/{filename}")
 
 
 class NetBoxImporter:
