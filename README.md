@@ -32,14 +32,17 @@ python netbox_exporter.py --url https://new-netbox.example.com --token NEW_TOKEN
 
 ## Features
 
-1. **Complete Coverage**: Exports all major NetBox models including DCIM, IPAM, Circuits, Tenancy, Virtualization, Wireless, VPN, and Extras
-2. **Dependency Resolution**: Resolves nested objects to slugs/names for import compatibility
-3. **Rate Limiting**: Built-in delays to avoid API throttling
-4. **Pagination**: Handles large datasets efficiently
-5. **Error Handling**: Continues on errors, logs failures for review
-6. **CSV Format**: Generates NetBox-compatible CSV files for bulk import
-7. **Flattening**: Converts nested structures to dot-notation for CSV compatibility
-    
+1. **Complete Coverage**: Exports all major NetBox models including Tenancy, Circuits, DCIM, IPAM, Virtualization, Wireless, VPN, and Extras
+2. **Dependency-Ordered Export**: Models are exported in correct dependency order (tenants → sites → racks → devices, etc.) to ensure import compatibility
+3. **Safe Reference Handling**: Extracts slugs/names/IDs from nested objects without following URLs, preventing infinite recursion on circular references (e.g., cables ↔ devices)
+4. **Rate Limiting**: Built-in delays to avoid API throttling with automatic retry on errors
+5. **Pagination**: Handles large datasets efficiently with configurable page limits
+6. **Error Resilience**: Continues on errors, logs failures for review, and retries failed requests
+7. **CSV Format**: Generates NetBox-compatible CSV files organized by app for bulk import
+8. **Shallow Flattening**: Converts nested structures to dot-notation for CSV compatibility without deep recursion
+9. **SSL Flexibility**: Option to disable SSL verification for self-signed certificates
+10. **Incremental Export**: Option to export single models via `--model` flag
+11. **Import Manifest**: Generates manifest.json tracking exported files and metadata 
 
 ## Notes
 
