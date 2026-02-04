@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 """
 NetBox Full Exporter
 Exports all NetBox data via API to JSON/CSV formats compatible with NetBox import.
@@ -10,7 +9,7 @@ import csv
 import requests
 import time
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, List, Any, Optional
 from urllib.parse import urljoin
 from datetime import datetime
 
@@ -18,93 +17,78 @@ from datetime import datetime
 class NetBoxExporter:
     """Export all NetBox data via API."""
 
-    # All NetBox models organized by app labels as of v4.x
-    MODELS = {
-        "circuits": [
-            "providers",
-            "circuit-types",
-            "circuits",
-            "circuit-terminations",
-        ],
-        "dcim": [
-            "sites",
-            "site-groups",
-            "locations",
-            "racks",
-            "rack-roles",
-            "manufacturers",
-            "device-types",
-            "module-types",
-            "devices",
-            "device-roles",
-            "platforms",
-            "rack-reservations",
-            "cables",
-            "virtual-chassis",
-            "power-feeds",
-            "power-panels",
-        ],
-        "ipam": [
-            "rir",
-            "aggregates",
-            "roles",
-            "prefixes",
-            "ip-ranges",
-            "ip-addresses",
-            "fhrp-groups",
-            "vlans",
-            "vlan-groups",
-            "services",
-        ],
-        "tenancy": [
-            "tenants",
-            "tenant-groups",
-            "contacts",
-            "contact-groups",
-            "contact-roles",
-            "contact-assignments",
-        ],
-        "virtualization": [
-            "clusters",
-            "cluster-types",
-            "cluster-groups",
-            "virtual-machines",
-            "vm-interfaces",
-        ],
-        "wireless": [
-            "wireless-lans",
-            "wireless-lan-groups",
-            "wireless-links",
-        ],
-        "vpn": [
-            "ike-proposals",
-            "ike-policies",
-            "ipsec-proposals",
-            "ipsec-policies",
-            "ipsec-profiles",
-            "l2vpns",
-            "l2vpn-terminations",
-            "tunnels",
-            "tunnel-terminations",
-        ],
-        "extras": [
-            "custom-fields",
-            "custom-links",
-            "export-templates",
-            "saved-filters",
-            "webhooks",
-            "tags",
-            "journal-entries",
-            "config-contexts",
-            "reports",
-            "scripts",
-        ],
-        "users": [
-            "users",
-            "groups",
-            "permissions",
-        ],
-    }
+    # Import order matters for dependencies
+    MODELS_ORDERED = [
+        # Tenancy (no dependencies)
+        ("tenancy", "tenant-groups"),
+        ("tenancy", "tenants"),
+        ("tenancy", "contact-groups"),
+        ("tenancy", "contact-roles"),
+        ("tenancy", "contacts"),
+        ("tenancy", "contact-assignments"),
+        # Circuits
+        ("circuits", "providers"),
+        ("circuits", "circuit-types"),
+        ("circuits", "circuits"),
+        ("circuits", "circuit-terminations"),
+        # DCIM - Infrastructure
+        ("dcim", "site-groups"),
+        ("dcim", "sites"),
+        ("dcim", "locations"),
+        ("dcim", "rack-roles"),
+        ("dcim", "racks"),
+        ("dcim", "rack-reservations"),
+        ("dcim", "manufacturers"),
+        ("dcim", "device-types"),
+        ("dcim", "module-types"),
+        ("dcim", "device-roles"),
+        ("dcim", "platforms"),
+        ("dcim", "devices"),
+        ("dcim", "virtual-chassis"),
+        ("dcim", "cables"),
+        ("dcim", "power-panels"),
+        ("dcim", "power-feeds"),
+        # IPAM
+        ("ipam", "rirs"),
+        ("ipam", "aggregates"),
+        ("ipam", "roles"),
+        ("ipam", "vlan-groups"),
+        ("ipam", "vlans"),
+        ("ipam", "prefixes"),
+        ("ipam", "ip-ranges"),
+        ("ipam", "ip-addresses"),
+        ("ipam", "fhrp-groups"),
+        ("ipam", "services"),
+        # Virtualization
+        ("virtualization", "cluster-types"),
+        ("virtualization", "cluster-groups"),
+        ("virtualization", "clusters"),
+        ("virtualization", "virtual-machines"),
+        ("virtualization", "vm-interfaces"),
+        # Wireless
+        ("wireless", "wireless-lan-groups"),
+        ("wireless", "wireless-lans"),
+        ("wireless", "wireless-links"),
+        # VPN
+        ("vpn", "ike-proposals"),
+        ("vpn", "ike-policies"),
+        ("vpn", "ipsec-proposals"),
+        ("vpn", "ipsec-policies"),
+        ("vpn", "ipsec-profiles"),
+        ("vpn", "tunnels"),
+        ("vpn", "tunnel-terminations"),
+        ("vpn", "l2vpns"),
+        ("vpn", "l2vpn-terminations"),
+        # Extras
+        ("extras", "tags"),
+        ("extras", "custom-fields"),
+        ("extras", "custom-links"),
+        ("extras", "export-templates"),
+        ("extras", "saved-filters"),
+        ("extras", "webhooks"),
+        ("extras", "journal-entries"),
+        ("extras", "config-contexts"),
+    ]
 
     def __init__(self, url: str, token: str, limit: int = 1000):
         self.base_url = url.rstrip("/") + "/"
@@ -118,23 +102,28 @@ class NetBoxExporter:
                 "Content-Type": "application/json",
             }
         )
+        self.session.verify = False  # Disable SSL verification if needed
 
         # Create output directory
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_dir = f"netbox_export_{self.timestamp}"
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def _get(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
-        """Make GET request with rate limiting and pagination."""
+        # Cache for resolved objects to prevent duplicate lookups
+        self._cache = {}
+
+    def _get(self, endpoint: str, params: Optional[Dict] = None) -> List[Dict]:
+        """Make GET request with pagination."""
         url = urljoin(self.base_url, f"api/{endpoint}/")
         all_results = []
         params = params or {}
         params["limit"] = self.limit
-        params["offset"] = 0
+        offset = 0
 
         while True:
+            params["offset"] = offset
             try:
-                response = self.session.get(url, params=params, timeout=30)
+                response = self.session.get(url, params=params, timeout=60)
                 response.raise_for_status()
                 data = response.json()
 
@@ -142,117 +131,144 @@ class NetBoxExporter:
                     all_results.extend(data["results"])
                     if not data.get("next"):
                         break
-                    params["offset"] += self.limit
+                    offset += self.limit
+                    print(
+                        f"  Fetched {len(all_results)}/{data.get('count', '?')}...",
+                        end="\r",
+                    )
                 else:
-                    return data
+                    return [data]
 
-                # Rate limiting
-                time.sleep(0.1)
+                time.sleep(0.05)  # Gentle rate limiting
 
             except requests.exceptions.RequestException as e:
-                print(f"  Error fetching {endpoint}: {e}")
-                time.sleep(1)
+                print(f"\n  Error fetching {endpoint}: {e}")
+                time.sleep(2)
                 continue
 
-        return {"results": all_results, "count": len(all_results)}
+        print(f"  Fetched {len(all_results)} total.          ")
+        return all_results
 
-    def _get_detail(self, url: str) -> Dict:
-        """Fetch full object details from URL."""
+    def _get_cached(self, url: str) -> Optional[Dict]:
+        """Cached object fetch."""
+        if url in self._cache:
+            return self._cache[url]
         try:
-            # Convert API URL to local path
-            if url.startswith(self.base_url):
-                url = url[len(self.base_url) :]
-            if not url.startswith("http"):
-                url = urljoin(self.base_url, url)
+            # Convert to full URL if relative
+            if url.startswith("/"):
+                url = urljoin(self.base_url, url.lstrip("/"))
+            elif not url.startswith("http"):
+                url = urljoin(self.base_url, f"api/{url}/")
+
             response = self.session.get(url, timeout=30)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            self._cache[url] = data
+            time.sleep(0.05)
+            return data
         except Exception as e:
-            print(f"  Error fetching detail {url}: {e}")
-            return {}
+            return None
 
-    def _resolve_nested(self, obj: Any, depth: int = 0) -> Any:
-        """Resolve nested objects to their identifiers."""
-        if depth > 2 or obj is None:
-            return obj
+    def _extract_ref(self, obj: Any) -> Any:
+        """Safely extract reference from nested object without deep recursion."""
+        if obj is None:
+            return None
 
         if isinstance(obj, dict):
-            # If it's a nested object with minimal data, try to get full details
-            if "id" in obj and "url" in obj and len(obj) <= 5:
-                full_obj = self._get_detail(obj["url"])
-                if full_obj:
-                    return self._clean_object(full_obj)
-            return {k: self._resolve_nested(v, depth + 1) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._resolve_nested(i, depth + 1) for i in obj]
+            # Priority order for references
+            if "slug" in obj:
+                return obj["slug"]
+            if "name" in obj:
+                return obj["name"]
+            if "id" in obj:
+                # For cables and other objects, just use ID to avoid recursion
+                return obj["id"]
+            return None
+
         return obj
 
-    def _clean_object(self, obj: Dict) -> Dict:
-        """Clean object for export, removing non-importable fields."""
+    def _clean_object(self, obj: Dict, depth: int = 0) -> Dict:
+        """Clean object for export, handling nested references safely."""
+        if depth > 3 or not isinstance(obj, dict):
+            return obj
+
         # Fields to remove (auto-generated or read-only)
         remove_fields = {
             "id",
             "url",
             "display",
+            "display_url",
             "created",
             "last_updated",
-            "custom_fields",  # Handle separately
+            "custom_fields",  # Handle separately if needed
         }
 
         cleaned = {}
+
         for key, value in obj.items():
             if key in remove_fields:
                 continue
 
-            # Resolve nested objects
+            # Handle tags specially
+            if key == "tags":
+                if isinstance(value, list):
+                    tag_names = []
+                    for tag in value:
+                        if isinstance(tag, dict):
+                            tag_names.append(tag.get("slug", tag.get("name", "")))
+                        else:
+                            tag_names.append(str(tag))
+                    cleaned[key] = ",".join(filter(None, tag_names))
+                else:
+                    cleaned[key] = value
+                continue
+
+            # Handle nested objects (single references)
             if isinstance(value, dict):
-                if "slug" in value:
-                    cleaned[key] = value["slug"]
-                elif "name" in value:
-                    cleaned[key] = value["name"]
-                elif "id" in value:
-                    cleaned[key] = value["id"]
+                ref = self._extract_ref(value)
+                if ref is not None:
+                    cleaned[key] = ref
                 else:
-                    cleaned[key] = self._resolve_nested(value)
+                    # Shallow clean of nested dict, don't recurse into sub-objects
+                    cleaned[key] = {
+                        k: v
+                        for k, v in value.items()
+                        if k not in remove_fields and not isinstance(v, (dict, list))
+                    }
+
+            # Handle lists
             elif isinstance(value, list):
-                # Handle tags specially
-                if key == "tags":
-                    cleaned[key] = ",".join(
-                        [t.get("slug", t.get("name", str(t))) for t in value]
-                    )
+                # Simple lists of primitives
+                if value and not isinstance(value[0], dict):
+                    cleaned[key] = value
                 else:
-                    cleaned[key] = [self._resolve_nested(v) for v in value]
+                    # List of objects - extract references
+                    refs = []
+                    for item in value:
+                        if isinstance(item, dict):
+                            ref = self._extract_ref(item)
+                            if ref:
+                                refs.append(ref)
+                        else:
+                            refs.append(item)
+                    cleaned[key] = refs if len(refs) != 1 else refs[0]
             else:
                 cleaned[key] = value
 
         return cleaned
 
-    def _flatten_dict(self, d: Dict, parent_key: str = "", sep: str = ".") -> Dict:
-        """Flatten nested dictionary for CSV export."""
-        items = []
-        for k, v in d.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
-            if isinstance(v, dict):
-                items.extend(self._flatten_dict(v, new_key, sep).items())
-            elif isinstance(v, list):
-                items.append((new_key, json.dumps(v)))
-            else:
-                items.append((new_key, v))
-        return dict(items)
-
     def export_model(self, app: str, model: str) -> Dict:
         """Export a single model."""
         endpoint = f"{app}/{model}"
-        print(f"Exporting {endpoint}...")
+        print(f"\nExporting {endpoint}...")
 
-        data = self._get(endpoint)
-        results = data.get("results", [])
+        results = self._get(endpoint)
 
         if not results:
             print(f"  No data found for {endpoint}")
             return {}
 
-        # Clean and resolve all objects
+        # Clean objects
         cleaned_results = []
         for item in results:
             cleaned = self._clean_object(item)
@@ -265,24 +281,18 @@ class NetBoxExporter:
         }
 
     def export_all(self):
-        """Export all models."""
+        """Export all models in dependency order."""
         full_export = {}
         total_objects = 0
 
-        for app, models in self.MODELS.items():
-            print(f"\n=== {app.upper()} ===")
-            app_data = {}
-
-            for model in models:
-                result = self.export_model(app, model)
-                if result:
-                    app_data[model] = result
-                    total_objects += result["count"]
-
-                    # Save individual CSV
-                    self._save_csv(result)
-
-            full_export[app] = app_data
+        for app, model in self.MODELS_ORDERED:
+            result = self.export_model(app, model)
+            if result:
+                if app not in full_export:
+                    full_export[app] = {}
+                full_export[app][model] = result
+                total_objects += result["count"]
+                self._save_csv(result)
 
         # Save full JSON export
         json_path = os.path.join(self.output_dir, "full_export.json")
@@ -294,20 +304,34 @@ class NetBoxExporter:
             "exported_at": self.timestamp,
             "netbox_url": self.base_url,
             "total_objects": total_objects,
-            "files": [
-                f"{app}/{model}.csv"
-                for app in self.MODELS
-                for model in self.MODELS[app]
-            ],
+            "files": [f"{app}/{model}.csv" for app, model in self.MODELS_ORDERED],
         }
         manifest_path = os.path.join(self.output_dir, "manifest.json")
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
 
-        print(f"\n✓ Export complete!")
+        print(f"\n{'=' * 50}")
+        print(f"✓ Export complete!")
         print(f"  Total objects: {total_objects}")
         print(f"  Output directory: {self.output_dir}")
+        print(f"{'=' * 50}")
         return full_export
+
+    def _flatten_dict(self, d: Dict, parent_key: str = "", sep: str = ".") -> Dict:
+        """Flatten nested dictionary for CSV export."""
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+
+            if isinstance(v, dict):
+                # Only flatten one level deep for CSV
+                for sub_k, sub_v in v.items():
+                    items.append((f"{new_key}.{sub_k}", sub_v))
+            elif isinstance(v, list):
+                items.append((new_key, json.dumps(v)))
+            else:
+                items.append((new_key, v))
+        return dict(items)
 
     def _save_csv(self, result: Dict):
         """Save data as CSV in NetBox import format."""
@@ -319,19 +343,17 @@ class NetBoxExporter:
 
         # Create subdirectory for app
         app_name = endpoint.split("/")[0]
+        model_name = endpoint.split("/")[-1]
         app_dir = os.path.join(self.output_dir, app_name)
         os.makedirs(app_dir, exist_ok=True)
 
-        # Determine filename
-        model_name = endpoint.split("/")[-1]
         filename = f"{model_name}.csv"
         filepath = os.path.join(app_dir, filename)
 
-        if not data:
-            return
-
-        # Flatten first object to get headers
+        # Flatten data
         flat_data = [self._flatten_dict(obj) for obj in data]
+
+        # Get all unique headers
         headers = set()
         for obj in flat_data:
             headers.update(obj.keys())
@@ -342,11 +364,18 @@ class NetBoxExporter:
             writer = csv.DictWriter(f, fieldnames=headers)
             writer.writeheader()
             for obj in flat_data:
-                # Convert non-string values
-                row = {k: str(v) if v is not None else "" for k, v in obj.items()}
+                # Clean values for CSV
+                row = {}
+                for k, v in obj.items():
+                    if v is None:
+                        row[k] = ""
+                    elif isinstance(v, (list, dict)):
+                        row[k] = json.dumps(v)
+                    else:
+                        row[k] = str(v)
                 writer.writerow(row)
 
-        print(f"  ✓ Saved {result['count']} records to {filepath}")
+        print(f"  ✓ Saved {result['count']} records to {app}/{filename}")
 
 
 class NetBoxImporter:
@@ -363,27 +392,32 @@ class NetBoxImporter:
                 "Content-Type": "application/json",
             }
         )
+        self.session.verify = False
 
     def import_from_csv(self, csv_path: str, endpoint: str):
         """Import data from CSV file."""
-        print(f"Importing {csv_path} to {endpoint}...")
+        print(f"\nImporting {csv_path} to {endpoint}...")
 
         with open(csv_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
+
+        if not rows:
+            print("  No rows to import")
+            return 0, []
 
         url = urljoin(self.base_url, f"api/{endpoint}/")
         success = 0
         errors = []
 
         for i, row in enumerate(rows):
-            # Clean empty values and unflatten nested keys
+            # Clean empty values
             data = {}
             for key, value in row.items():
-                if value == "":
+                if value == "" or value is None:
                     continue
 
-                # Handle nested keys (e.g., "site.name")
+                # Handle dot-notation keys (flattened nested objects)
                 if "." in key:
                     parts = key.split(".")
                     current = data
@@ -393,105 +427,118 @@ class NetBoxImporter:
                         current = current[part]
                     current[parts[-1]] = value
                 else:
-                    data[key] = value
+                    # Try to parse JSON
+                    if value.startswith("[") or value.startswith("{"):
+                        try:
+                            data[key] = json.loads(value)
+                        except:
+                            data[key] = value
+                    else:
+                        data[key] = value
 
-                # Parse JSON strings
-                if value.startswith("[") or value.startswith("{"):
-                    try:
-                        data[key] = json.loads(value)
-                    except:
-                        pass
+            # Skip if only ID present (no real data)
+            if len(data) <= 1 and "id" in data:
+                continue
 
             try:
                 response = self.session.post(url, json=data, timeout=30)
-                if response.status_code == 201:
+                if response.status_code in [201, 200]:
                     success += 1
-                    print(
-                        f"  ✓ [{i + 1}/{len(rows)}] Created: {
-                            data.get('name', data.get('slug', 'Unknown'))
-                        }"
-                    )
+                    identifier = data.get("name", data.get("slug", f"row {i + 1}"))
+                    print(f"  ✓ [{i + 1}/{len(rows)}] Created: {identifier}")
                 else:
+                    err_msg = (
+                        response.text[:200]
+                        if len(response.text) > 200
+                        else response.text
+                    )
                     errors.append(
                         {
                             "row": i,
                             "data": data,
-                            "error": response.text,
+                            "error": err_msg,
                             "status": response.status_code,
                         }
                     )
                     print(f"  ✗ [{i + 1}/{len(rows)}] Failed: {response.status_code}")
 
-                time.sleep(0.1)  # Rate limiting
+                time.sleep(0.05)
 
             except Exception as e:
                 errors.append({"row": i, "error": str(e)})
-                print(f"  ✗ [{i + 1}/{len(rows)}] Error: {e}")
+                print(f"  ✗ [{i + 1}/{len(rows)}] Error: {str(e)[:100]}")
 
-        print(f"\n  Summary: {success}/{len(rows)} successful")
-        if errors:
+        print(f"  Summary: {success}/{len(rows)} successful")
+        if errors and len(errors) > 0:
             error_path = csv_path.replace(".csv", "_errors.json")
             with open(error_path, "w") as f:
                 json.dump(errors, f, indent=2)
-            print(f"Errors saved to {error_path}")
+            print(f"  Errors saved to {error_path}")
 
         return success, errors
 
     def import_all(self, export_dir: str):
         """Import all CSV files from export directory."""
         manifest_path = os.path.join(export_dir, "manifest.json")
+
+        files_to_import = []
         if os.path.exists(manifest_path):
             with open(manifest_path) as f:
                 manifest = json.load(f)
-            files = manifest.get("files", [])
+            files_to_import = manifest.get("files", [])
         else:
-            # Scan directory
-            files = []
-            for root, dirs, filenames in os.walk(export_dir):
-                for f in filenames:
-                    if f.endswith(".csv"):
-                        rel_path = os.path.relpath(os.path.join(root, f), export_dir)
-                        files.append(rel_path.replace(os.sep, "/"))
+            # Discover files
+            for root, dirs, files in os.walk(export_dir):
+                for file in files:
+                    if file.endswith(".csv"):
+                        rel_path = os.path.relpath(os.path.join(root, file), export_dir)
+                        files_to_import.append(rel_path.replace(os.sep, "/"))
 
-        # Import order matters (dependencies first)
-        import_order = [
-            "tenancy",
-            "circuits",
-            "dcim",
-            "ipam",
-            "virtualization",
-            "wireless",
-            "vpn",
-            "extras",
-        ]
+        if not files_to_import:
+            print("No CSV files found to import")
+            return
 
-        sorted_files = []
-        for app in import_order:
-            app_files = [f for f in files if f.startswith(app)]
-            sorted_files.extend(sorted(app_files))
+        print(f"Found {len(files_to_import)} files to import")
 
-        for file_path in sorted_files:
+        total_success = 0
+        total_errors = 0
+
+        for file_path in files_to_import:
             csv_path = os.path.join(export_dir, file_path)
+            if not os.path.exists(csv_path):
+                print(f"Warning: {csv_path} not found, skipping")
+                continue
+
             endpoint = file_path.replace(".csv", "")
-            self.import_from_csv(csv_path, endpoint)
+            success, errors = self.import_from_csv(csv_path, endpoint)
+            total_success += success
+            total_errors += len(errors)
+
+        print(f"\n{'=' * 50}")
+        print(f"Import complete!")
+        print(f"  Total successful: {total_success}")
+        print(f"  Total errors: {total_errors}")
+        print(f"{'=' * 50}")
 
 
 def main():
-    """CLI interface."""
     import argparse
 
     parser = argparse.ArgumentParser(description="NetBox Exporter/Importer")
-    parser.add_argument(
-        "--url",
-        "-u",
-        required=True,
-        help="NetBox URL (e.g., http://netbox.example.com)",
-    )
+    parser.add_argument("--url", "-u", required=True, help="NetBox URL")
     parser.add_argument("--token", "-t", required=True, help="NetBox API token")
     parser.add_argument("--import-dir", "-i", help="Import from directory")
     parser.add_argument("--limit", "-l", type=int, default=1000, help="API page limit")
+    parser.add_argument(
+        "--model", "-m", help="Export only specific model (e.g., dcim/devices)"
+    )
 
     args = parser.parse_args()
+
+    # Disable SSL warnings
+    import urllib3
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     if args.import_dir:
         print(f"Importing to {args.url}")
@@ -500,7 +547,16 @@ def main():
     else:
         print(f"Exporting from {args.url}")
         exporter = NetBoxExporter(args.url, args.token, args.limit)
-        exporter.export_all()
+
+        if args.model:
+            parts = args.model.split("/")
+            if len(parts) == 2:
+                result = exporter.export_model(parts[0], parts[1])
+                exporter._save_csv(result)
+            else:
+                print("Invalid model format. Use: app/model (e.g., dcim/devices)")
+        else:
+            exporter.export_all()
 
 
 if __name__ == "__main__":
