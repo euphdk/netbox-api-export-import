@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# dependencies = [
-#   "requests<3",
-#   "rich",
-# ]
-# ///
 
 """
 NetBox Full Exporter
@@ -14,10 +8,9 @@ Exports all NetBox data via API to JSON/CSV formats compatible with NetBox impor
 import json
 import csv
 import requests
-import sys
 import time
 import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 from urllib.parse import urljoin
 from datetime import datetime
 
@@ -414,7 +407,9 @@ class NetBoxImporter:
                 if response.status_code == 201:
                     success += 1
                     print(
-                        f"  ✓ [{i + 1}/{len(rows)}] Created: {data.get('name', data.get('slug', 'Unknown'))}"
+                        f"  ✓ [{i + 1}/{len(rows)}] Created: {
+                            data.get('name', data.get('slug', 'Unknown'))
+                        }"
                     )
                 else:
                     errors.append(
