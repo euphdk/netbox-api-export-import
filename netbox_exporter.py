@@ -166,7 +166,7 @@ class NetBoxExporter:
             self._cache[url] = data
             time.sleep(0.05)
             return data
-        except Exception as e:
+        except Exception:
             return None
 
     def _extract_ref(self, obj: Any) -> Any:
@@ -515,7 +515,7 @@ class NetBoxImporter:
             total_errors += len(errors)
 
         print(f"\n{'=' * 50}")
-        print(f"Import complete!")
+        print("Import complete!")
         print(f"  Total successful: {total_success}")
         print(f"  Total errors: {total_errors}")
         print(f"{'=' * 50}")
