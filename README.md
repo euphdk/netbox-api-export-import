@@ -1,6 +1,6 @@
 # Netbox API Export / Import
 
-**WARNING:** 99.9% vibe coded...
+**WARNING:** 99.9% vibe coded... Import not tested yet
 
 ## Usage
 
