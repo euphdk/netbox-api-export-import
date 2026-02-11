@@ -44,7 +44,23 @@ class NetBoxExporter:
         ("dcim", "device-roles"),
         ("dcim", "platforms"),
         ("dcim", "devices"),
+        # Device components (must come after devices)
+        ("dcim", "interfaces"),
+        ("dcim", "console-ports"),
+        ("dcim", "console-server-ports"),
+        ("dcim", "power-ports"),
+        ("dcim", "power-outlets"),
+        ("dcim", "front-ports"),
+        ("dcim", "rear-ports"),
+        ("dcim", "device-bays"),
+        ("dcim", "inventory-items"),
+        # Virtual device contexts (VDCs) - logical device partitions
+        ("dcim", "virtual-device-contexts"),
+        # Modules (module-bays on devices, modules installed in bays)
+        ("dcim", "module-bays"),
+        ("dcim", "modules"),
         ("dcim", "virtual-chassis"),
+        # Cables must come after device components
         ("dcim", "cables"),
         ("dcim", "power-panels"),
         ("dcim", "power-feeds"),
@@ -58,6 +74,7 @@ class NetBoxExporter:
         ("ipam", "ip-ranges"),
         ("ipam", "ip-addresses"),
         ("ipam", "fhrp-groups"),
+        ("ipam", "fhrp-group-assignments"),
         ("ipam", "services"),
         # Virtualization
         ("virtualization", "cluster-types"),
